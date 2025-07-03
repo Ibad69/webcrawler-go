@@ -57,7 +57,6 @@ var (
 
 func main() {
 	fmt.Println("go web crawler ready!!")
-	// start := time.Now()
 
 	links := []string{
 		"https://devxonic.com/",
@@ -66,7 +65,6 @@ func main() {
 		"https://x.com",
 		"https://youtube.com",
 	}
-	// content := readLink()
 
 	content_res := make(chan []byte)
 	linkchan := make(chan string)
@@ -82,41 +80,29 @@ func main() {
 		linkname := <-linkchan
 
 		// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
-		// go func() {
-		queue := Queue{elements: make([]string, 0)}
-		crawler := CrawledStatus{link: make(map[string]string), count: 0}
+		go func() {
+			queue := Queue{elements: make([]string, 0)}
+			crawler := CrawledStatus{link: make(map[string]string), count: 0}
 
-		done := make(chan bool)
-		fmt.Println("linkchan", linkname)
+			done := make(chan bool)
+			fmt.Println("linkchan", linkname)
 
-		queue.Enqueue(linkname)
-		ParseHtml(content, &queue, &crawler, done, linkname)
+			queue.Enqueue(linkname)
+			ParseHtml(content, &queue, &crawler, done, linkname)
 
-		queue.Dequeue()
-		for len(queue.elements) != 0 {
-			b := []byte(queue.elements[0])
-			ParseHtml(b, &queue, &crawler, done, linkname)
 			queue.Dequeue()
-		}
-		// elapsed := time.Since(start)
-		// fmt.Println("time taken", elapsed)
-		fmt.Println("queue for link", queue.elements)
-
-		// fmt.Println("the state of crawler", crawler)
-		// }()
+			for len(queue.elements) != 0 {
+				b := []byte(queue.elements[0])
+				ParseHtml(b, &queue, &crawler, done, linkname)
+				queue.Dequeue()
+			}
+			fmt.Println("queue for link", queue.elements)
+		}()
 		fmt.Println("now processing the next link")
 	}
 }
 
-// fmt.Println("queue state?", (buffchan))
-// after receiving the value I will check if it already exists in the queue? if it does then I'll skip it
-// if it does not thenn we will parse it annd find more links from it
-// v := <-done
-// fmt.Println("received from channel", v)
-// continue
-
 func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link string) {
-	// fmt.Printf("🛠️  Started parsing %s, %s at %s\n", link, time.Now().Format("15:04:05"))
 	z := html.NewTokenizer(bytes.NewReader(content))
 
 	for {
@@ -137,21 +123,11 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 			}
 			if t.Data == "title" {
 				z.Next()
-				// title := z.Token().Data // data disappears after z.Token() is called
-				// webpage.Title = title
-				// fmt.Printf("Count: %d | %s -> %s\n", title)
 			}
 			if t.Data == "a" {
 				// fmt.Println("href?", t.String())
 				for _, v := range t.Attr {
-					// fmt.Println("printing all values", v.Val)
-					// for _, v1 := range v.Val {
-					// 	fmt.Println("priting inner values", string(v1))
-					// }
 					if strings.HasPrefix(v.Val, "http") {
-						// fmt.Println("printing actual value now", v.Val, "title ===> ")
-						// push the link to the queue
-						// Enqueue(chx, v.Val)
 						if c.link[v.Val] != "" {
 							continue
 						}
@@ -162,22 +138,7 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 						// done <- true
 					}
 				}
-				// ok, href := getHref(t)
-				// if !ok {
-				// 	continue
-				// }
-				// if crawled.contains(href) {
-				// Already crawled
-				// continue
-				// } else {
-				// q.enqueue(href)
-				// }
 			}
-			// fmt.Printf(
-			// 	"✅ Finished parsing %s, %s at %s\n",
-			// 	link,
-			// 	time.Now().Format("15:04:05"),
-			// )
 		}
 	}
 }
@@ -221,3 +182,10 @@ func readLink(link string) []byte {
 
 func crawl() {
 }
+
+// fmt.Println("queue state?", (buffchan))
+// after receiving the value I will check if it already exists in the queue? if it does then I'll skip it
+// if it does not thenn we will parse it annd find more links from it
+// v := <-done
+// fmt.Println("received from channel", v)
+// continue
