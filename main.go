@@ -57,13 +57,14 @@ var (
 
 func main() {
 	fmt.Println("go web crawler ready!!")
+	// start := time.Now()
 
 	links := []string{
 		"https://devxonic.com/",
-		// "https://google.com",
-		// "https://facebook.com",
-		// "https://x.com",
-		// "https://youtube.com",
+		"https://google.com",
+		"https://facebook.com",
+		"https://x.com",
+		"https://youtube.com",
 	}
 	// content := readLink()
 
@@ -81,7 +82,7 @@ func main() {
 		linkname := <-linkchan
 
 		// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
-
+		// go func() {
 		queue := Queue{elements: make([]string, 0)}
 		crawler := CrawledStatus{link: make(map[string]string), count: 0}
 
@@ -89,25 +90,21 @@ func main() {
 		fmt.Println("linkchan", linkname)
 
 		queue.Enqueue(linkname)
-		ParseHtml(content, &queue, &crawler, done)
+		ParseHtml(content, &queue, &crawler, done, linkname)
 
 		queue.Dequeue()
-		fmt.Println("queue elements length ==> ", len(queue.elements))
 		for len(queue.elements) != 0 {
-			// go func(done chan bool) {
-			// fmt.Println("where is the error occuring", i)
-			fmt.Println("queue elements", len(queue.elements))
 			b := []byte(queue.elements[0])
-			ParseHtml(b, &queue, &crawler, done)
+			ParseHtml(b, &queue, &crawler, done, linkname)
 			queue.Dequeue()
-			// }(done)
 		}
-		// for i := 0; i <= len(queue.elements); i++ {
-		// 	// fmt.Println("queue elements length", len(queue.elements))
-		// 	// fmt.Println("i state ==> ", i)
-		// }
-		fmt.Println("the state of crawler", crawler.count)
-		// fmt.Println("all crawleed webs", crawler.link)
+		// elapsed := time.Since(start)
+		// fmt.Println("time taken", elapsed)
+		fmt.Println("queue for link", queue.elements)
+
+		// fmt.Println("the state of crawler", crawler)
+		// }()
+		fmt.Println("now processing the next link")
 	}
 }
 
@@ -118,7 +115,8 @@ func main() {
 // fmt.Println("received from channel", v)
 // continue
 
-func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool) {
+func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link string) {
+	// fmt.Printf("🛠️  Started parsing %s, %s at %s\n", link, time.Now().Format("15:04:05"))
 	z := html.NewTokenizer(bytes.NewReader(content))
 
 	for {
@@ -175,6 +173,11 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool) {
 				// q.enqueue(href)
 				// }
 			}
+			// fmt.Printf(
+			// 	"✅ Finished parsing %s, %s at %s\n",
+			// 	link,
+			// 	time.Now().Format("15:04:05"),
+			// )
 		}
 	}
 }
