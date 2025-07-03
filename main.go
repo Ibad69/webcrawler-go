@@ -7,8 +7,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/html"
@@ -56,6 +59,29 @@ var (
 )
 
 func main() {
+	// Parse command-line flags
+	flag.Parse()
+	// stop := make(chan os.Signal, 1)
+	// signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	// ctx, cancel := context.WithCancel(context.Background())
+	// defer cancel()
+
+	var wg sync.WaitGroup
+
+	// Start CPU profiling if the cpuprofile flag is set
+	if *cpuProfile != "" {
+		file, err := os.Create(*cpuProfile)
+		if err != nil {
+			log.Fatal("Could not create CPU profile: ", err)
+		}
+		defer file.Close()
+
+		if err := pprof.StartCPUProfile(file); err != nil {
+			log.Fatal("Could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
 	fmt.Println("go web crawler ready!!")
 
 	links := []string{
@@ -66,40 +92,29 @@ func main() {
 		"https://youtube.com",
 	}
 
+	// workerque := make([]string, 3)
+
+	jobschan := make(chan string)
 	content_res := make(chan []byte)
 	linkchan := make(chan string)
+	complete := make(chan int)
 
-	for w := 0; w < len(links); w++ {
-		fmt.Println("spawing a worker")
-		go worker(links[w], content_res, linkchan)
+	for w := 0; w < 3; w++ {
+		// fmt.Println("spawing a worker")
+		wg.Add(1)
+		go worker(content_res, linkchan, jobschan, complete)
+		go crawl(content_res, linkchan, &wg)
 	}
 
-	for {
-		content := <-content_res
-
-		linkname := <-linkchan
-
-		// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
-		go func() {
-			queue := Queue{elements: make([]string, 0)}
-			crawler := CrawledStatus{link: make(map[string]string), count: 0}
-
-			done := make(chan bool)
-			fmt.Println("linkchan", linkname)
-
-			queue.Enqueue(linkname)
-			ParseHtml(content, &queue, &crawler, done, linkname)
-
-			queue.Dequeue()
-			for len(queue.elements) != 0 {
-				b := []byte(queue.elements[0])
-				ParseHtml(b, &queue, &crawler, done, linkname)
-				queue.Dequeue()
-			}
-			fmt.Println("queue for link", queue.elements)
-		}()
-		fmt.Println("now processing the next link")
+	for j := 0; j < len(links); j++ {
+		// fmt.Println("trying to send jobs to channel", links[j])
+		jobschan <- links[j]
 	}
+
+	close(jobschan)
+
+	// <-stop
+	log.Println("Shutting gracefully")
 }
 
 func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link string) {
@@ -155,11 +170,25 @@ func logGoroutineCount() {
 	}
 }
 
-func worker(link string, res chan []byte, linkchan chan string) {
-	content := readLink(link)
-	res <- content
-	fmt.Println("sending link to link channel", link)
-	linkchan <- link
+func worker(res chan []byte, linkchan chan string, jobschan <-chan string, shutdown chan int) {
+	for {
+		select {
+		case job, ok := <-jobschan:
+			if !ok {
+				fmt.Errorf("channel closed error occured in processing the job")
+			}
+			// fmt.Println("received in job?")
+			// fmt.Println("jobschaneel", job)
+			content := readLink(job)
+			// fmt.Println("content reading done")
+			res <- content
+			// fmt.Println("sending link to link channel", job)
+			linkchan <- job
+		case <-time.After(5 * time.Second):
+			fmt.Println("no jobs received gracefully shutting down")
+			shutdown <- 1
+		}
+	}
 }
 
 func readLink(link string) []byte {
@@ -180,7 +209,36 @@ func readLink(link string) []byte {
 	return content
 }
 
-func crawl() {
+func crawl(content_res chan []byte, linkchan chan string, wg *sync.WaitGroup) {
+	for {
+		// fmt.Println("inside the loop")
+		queue := Queue{elements: make([]string, 0)}
+		crawler := CrawledStatus{link: make(map[string]string), count: 0}
+		content := <-content_res
+
+		linkname := <-linkchan
+
+		// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			done := make(chan bool)
+			fmt.Println("linkchan", linkname)
+
+			queue.Enqueue(linkname)
+			ParseHtml(content, &queue, &crawler, done, linkname)
+
+			queue.Dequeue()
+			for len(queue.elements) != 0 {
+				b := []byte(queue.elements[0])
+				ParseHtml(b, &queue, &crawler, done, linkname)
+				queue.Dequeue()
+			}
+			fmt.Println("queue for link", queue.elements)
+		}()
+		fmt.Println("now processing the next link")
+	}
 }
 
 // fmt.Println("queue state?", (buffchan))
