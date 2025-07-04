@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
@@ -26,11 +27,9 @@ import (
 // if not the crawling is still going on
 
 type Queue struct {
-	// crawled bool
 	link     string
 	elements []string
-	// count   int
-	mu sync.Mutex
+	mu       sync.Mutex
 }
 
 func (q *Queue) Enqueue(url string) {
@@ -49,7 +48,7 @@ func (q *Queue) Dequeue() (string, bool) {
 }
 
 type CrawledStatus struct {
-	link  map[string]string
+	link  map[uint64]bool
 	count int
 	mu    sync.Mutex
 }
@@ -57,8 +56,26 @@ type CrawledStatus struct {
 func (cs *CrawledStatus) UpdateCrawledStatus(link string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	cs.link[link] = link
+	cs.link[hashUrl(link)] = true
 	cs.count++
+}
+
+func (cs *CrawledStatus) contains(link string) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.link[hashUrl(link)]
+}
+
+func (cs *CrawledStatus) size() int {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.count
+}
+
+func hashUrl(url string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(url))
+	return h.Sum64()
 }
 
 var (
@@ -93,6 +110,7 @@ func main() {
 	links := []string{
 		"http://localhost:8080/index.html",
 		"http://localhost:8080/loop.html",
+		// "http://localhost:8080/page0.html",
 	}
 
 	content_res := make(chan []byte)
@@ -114,7 +132,24 @@ func main() {
 	}()
 
 	queue := Queue{elements: make([]string, 0)}
-	crawler := CrawledStatus{link: make(map[string]string), count: 0}
+	crawler := CrawledStatus{link: make(map[uint64]bool), count: 0}
+
+	go func() {
+		for {
+			seen := make(map[string]bool) // Create a map to store seen elements
+
+			for _, num := range queue.elements {
+				if seen[num] { // If the element is already in the map, it's a duplicate
+					fmt.Println("duplicate found in queue??", num, queue.elements)
+					// return true
+				}
+				seen[num] = true // Mark the element as seen
+			}
+			fmt.Println("no duplicate")
+			time.Sleep(2 * time.Second)
+			// return false // No duplicates found
+		}
+	}()
 
 	go logGoroutineCount(&crawler)
 
@@ -147,13 +182,17 @@ func main() {
 			queue.Enqueue(linkname)
 			ParseHtml(content, &queue, &crawler, done, linkname)
 
+			crawler.UpdateCrawledStatus(linkname)
 			queue.Dequeue()
-			for len(queue.elements) != 0 {
-				b := []byte(queue.elements[0])
-				ParseHtml(b, &queue, &crawler, done, linkname)
+
+			fmt.Println("queue at this time", queue.elements)
+
+			for len(queue.elements) != 0 && crawler.size() < 100 {
+				fmt.Println("after deque", queue.elements)
+				b := readLink(queue.elements[0])
+				ParseHtml(b, &queue, &crawler, done, queue.elements[0])
+				crawler.UpdateCrawledStatus(queue.elements[0])
 				queue.Dequeue()
-				crawler.UpdateCrawledStatus(linkname)
-				fmt.Println("crawled", linkname)
 			}
 			fmt.Println("queue for link", linkname, queue.elements)
 			fmt.Println("crawled status", crawler.count)
@@ -180,7 +219,7 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 	for {
 		tt := z.Next()
 		if tt == html.ErrorToken {
-			break
+			return
 		}
 		t := z.Token()
 		if t.Type == html.StartTagToken {
@@ -194,22 +233,38 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 				z.Next()
 			}
 			if t.Data == "a" {
-				for _, v := range t.Attr {
-					if strings.HasPrefix(v.Val, "http") {
-						if c.link[v.Val] != "" {
-							continue
-						}
-						q.Enqueue(v.Val)
-					}
+				// fmt.Println("found links?", t.Attr)
+				// for _, v := range t.Attr {
+				// 	if strings.HasPrefix(v.Val, "http") {
+				// 		if c.contains(v.Val) {
+				// 			fmt.Println("cotinuing at", v)
+				// 			continue
+				// 		}
+				// 		// fmt.Println("adding to queue", v)
+				// 		fmt.Println("enqueing", v.Val)
+				// 		q.Enqueue(v.Val)
+				// 	}
+				// }
+				ok, href := getHref(t)
+				fmt.Println("href", href)
+				fmt.Println(q.elements)
+				fmt.Println(c.contains(href))
+				if !ok {
+					continue
+				}
+				if c.contains(href) {
+					continue
+				} else {
+					q.Enqueue(href)
 				}
 			}
 		}
 	}
 }
 
-func Enqueue(chx chan string, link string) {
-	chx <- link
-}
+// func Enqueue(chx chan string, link string) {
+// 	chx <- link
+// }
 
 func logGoroutineCount(crawler *CrawledStatus) {
 	for {
@@ -272,7 +327,19 @@ func readLink(link string) []byte {
 	return content
 }
 
-func crawl() {
+func getHref(t html.Token) (ok bool, href string) {
+	for _, a := range t.Attr {
+		if a.Key == "href" {
+			if len(a.Val) == 0 || !strings.HasPrefix(a.Val, "http") {
+				ok = false
+				href = a.Val
+				return ok, href
+			}
+			href = a.Val
+			ok = true
+		}
+	}
+	return ok, href
 }
 
 // fmt.Println("queue state?", (buffchan))
