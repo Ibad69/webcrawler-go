@@ -10,6 +10,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"runtime/trace"
 	"strings"
 	"sync"
@@ -29,9 +30,12 @@ type Queue struct {
 	link     string
 	elements []string
 	// count   int
+	mu sync.Mutex
 }
 
 func (q *Queue) Enqueue(url string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.elements = append(q.elements, url)
 }
 
@@ -47,10 +51,14 @@ func (q *Queue) Dequeue() (string, bool) {
 type CrawledStatus struct {
 	link  map[string]string
 	count int
+	mu    sync.Mutex
 }
 
 func (cs *CrawledStatus) UpdateCrawledStatus(link string) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
 	cs.link[link] = link
+	cs.count++
 }
 
 var (
@@ -61,6 +69,20 @@ var (
 
 func main() {
 	fmt.Println("go web crawler ready!!")
+	flag.Parse()
+
+	if *cpuProfile != "" {
+		file, err := os.Create(*cpuProfile)
+		if err != nil {
+			log.Fatal("Could not create CPU profile: ", err)
+		}
+		defer file.Close()
+
+		if err := pprof.StartCPUProfile(file); err != nil {
+			log.Fatal("Could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	f, _ := os.Create("trace.out")
 	trace.Start(f)
@@ -68,10 +90,11 @@ func main() {
 
 	links := []string{
 		"https://devxonic.com/",
-		"https://google.com",
-		"https://facebook.com",
-		"https://x.com",
-		"https://youtube.com",
+		// "https://linkitsoft.com",
+		// "https://google.com",
+		// "https://facebook.com",
+		// "https://x.com",
+		// "https://youtube.com",
 	}
 
 	content_res := make(chan []byte)
@@ -79,20 +102,28 @@ func main() {
 
 	var wg sync.WaitGroup
 
+	go logGoroutineCount()
+
 	// go func() {
 	// 	http.ListenAndServe("localhost:6060", nil)
 	// }()
 
 	for w := 0; w < len(links); w++ {
-		defer wg.Done()
+		// defer wg.Done()
 		fmt.Println("spawing a worker")
 		wg.Add(1)
 		go worker(links[w], content_res, linkchan, &wg)
 	}
 
+	queue := Queue{elements: make([]string, 0)}
+	crawler := CrawledStatus{link: make(map[string]string), count: 0}
+
 	for {
+		fmt.Println("waiting for content")
 		select {
 		case content, ok := <-content_res:
+
+			fmt.Println("received content")
 
 			if !ok {
 				fmt.Printf("error")
@@ -105,35 +136,34 @@ func main() {
 			linkname := <-linkchan
 
 			// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
-			wg.Add(1)
-			go func(wg *sync.WaitGroup) {
-				defer wg.Done()
-				queue := Queue{elements: make([]string, 0)}
-				crawler := CrawledStatus{link: make(map[string]string), count: 0}
+			// wg.Add(1)
+			// go func(wg *sync.WaitGroup) {
+			// defer wg.Done()
 
-				done := make(chan bool)
-				fmt.Println("linkchan", linkname)
+			done := make(chan bool)
+			fmt.Println("linkchan", linkname)
 
-				queue.Enqueue(linkname)
-				ParseHtml(content, &queue, &crawler, done, linkname)
+			queue.Enqueue(linkname)
+			ParseHtml(content, &queue, &crawler, done, linkname)
 
+			queue.Dequeue()
+			for len(queue.elements) != 0 {
+				b := []byte(queue.elements[0])
+				ParseHtml(b, &queue, &crawler, done, linkname)
 				queue.Dequeue()
-				for len(queue.elements) != 0 {
-					b := []byte(queue.elements[0])
-					ParseHtml(b, &queue, &crawler, done, linkname)
-					queue.Dequeue()
-				}
-				fmt.Println("queue for link", linkname, queue.elements)
-			}(&wg)
+				crawler.UpdateCrawledStatus(linkname)
+			}
+			fmt.Println("queue for link", linkname, queue.elements)
+			fmt.Println("crawled status", crawler.count)
+			// }(&wg)
 			fmt.Println("now processing the next link")
-		case <-time.After(3 * time.Second):
-			close(content_res)
-			close(linkchan)
-			fmt.Println(runtime.NumGoroutine())
+		case <-time.After(10 * time.Second):
+			// fmt.Println(runtime.NumGoroutine())
 			// wg.Wait()
 			fmt.Println(
 				"no content received for 10 seconds so trying to exit after closing all go routines",
 			)
+			fmt.Println("crawled status", crawler.count)
 			// return
 		}
 		// fmt.Println("breaking?")
@@ -167,8 +197,8 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 							continue
 						}
 						q.Enqueue(v.Val)
-						c.link[v.Val] = v.Val
-						c.count++
+						// c.link[v.Val] = v.Val
+						// c.count++
 						// fmt.Println("sending to channel now?")
 						// done <- true
 					}
@@ -196,10 +226,14 @@ func worker(link string, res chan []byte, linkchan chan string, wg *sync.WaitGro
 	res <- content
 	fmt.Println("sending link to link channel", link)
 	linkchan <- link
+	return
 }
 
-func readLink(link string) []byte {
-	res, err := http.Get(link)
+func readLinkV2(link string) []byte {
+	client := http.Client{
+		Timeout: 5 * time.Second,
+	}
+	res, err := client.Get(link)
 	if err != nil {
 		fmt.Println("error occured")
 		fmt.Println(err)
@@ -209,10 +243,30 @@ func readLink(link string) []byte {
 	if err != nil {
 		fmt.Println("an error occured in opening the file")
 	}
-	res.Body.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
+	return content
+}
+
+func readLink(link string) []byte {
+	client := http.Client{
+		Timeout: 5 * time.Second, // always set a timeout!
+	}
+
+	res, err := client.Get(link)
+	if err != nil {
+		log.Printf("error fetching link %s: %v", link, err)
+		return nil
+	}
+	defer res.Body.Close()
+
+	content, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Printf("error reading body from %s: %v", link, err)
+		return nil
+	}
+
 	return content
 }
 
