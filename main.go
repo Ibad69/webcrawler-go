@@ -48,7 +48,8 @@ func (q *Queue) Dequeue() (string, bool) {
 }
 
 type CrawledStatus struct {
-	link  map[uint64]bool
+	link map[uint64]bool
+	// link  map[string]string
 	count int
 	mu    sync.Mutex
 }
@@ -57,6 +58,7 @@ func (cs *CrawledStatus) UpdateCrawledStatus(link string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.link[hashUrl(link)] = true
+	// cs.link[(link)] = link
 	cs.count++
 }
 
@@ -64,6 +66,7 @@ func (cs *CrawledStatus) contains(link string) bool {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	return cs.link[hashUrl(link)]
+	// return cs.link[link] == link
 }
 
 func (cs *CrawledStatus) size() int {
@@ -108,9 +111,9 @@ func main() {
 	defer trace.Stop()
 
 	links := []string{
-		"http://localhost:8080/index.html",
-		"http://localhost:8080/loop.html",
-		// "http://localhost:8080/page0.html",
+		// "http://localhost:8080/index.html",
+		// "http://localhost:8080/loop.html",
+		"http://localhost:8080/page0.html",
 	}
 
 	content_res := make(chan []byte)
@@ -132,6 +135,7 @@ func main() {
 	}()
 
 	queue := Queue{elements: make([]string, 0)}
+	// crawler := CrawledStatus{link: make(map[string]string), count: 0}
 	crawler := CrawledStatus{link: make(map[uint64]bool), count: 0}
 
 	go func() {
@@ -187,8 +191,12 @@ func main() {
 
 			fmt.Println("queue at this time", queue.elements)
 
-			for len(queue.elements) != 0 && crawler.size() < 100 {
-				fmt.Println("after deque", queue.elements)
+			for len(queue.elements) != 0 && crawler.size() < 5000 {
+				// fmt.Println("after deque", queue.elements)
+
+				// if crawler.contains(queue.elements[0]) {
+				// 	continue
+				// }
 				b := readLink(queue.elements[0])
 				ParseHtml(b, &queue, &crawler, done, queue.elements[0])
 				crawler.UpdateCrawledStatus(queue.elements[0])
@@ -246,9 +254,10 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 				// 	}
 				// }
 				ok, href := getHref(t)
-				fmt.Println("href", href)
-				fmt.Println(q.elements)
-				fmt.Println(c.contains(href))
+				log.Println("href", href)
+				// fmt.Println(q.elements)
+				log.Println(c)
+				log.Println(c.contains(href))
 				if !ok {
 					continue
 				}
