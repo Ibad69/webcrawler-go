@@ -91,12 +91,6 @@ func main() {
 	defer trace.Stop()
 
 	links := []string{
-		// "https://devxonic.com/",
-		// // "https://linkitsoft.com",
-		// "https://google.com",
-		// "https://facebook.com",
-		// "https://x.com",
-		// "https://youtube.com",
 		"http://localhost:8080/index.html",
 		"http://localhost:8080/loop.html",
 	}
@@ -105,10 +99,6 @@ func main() {
 	linkchan := make(chan string)
 
 	var wg sync.WaitGroup
-
-	// go func() {
-	// 	http.ListenAndServe("localhost:6060", nil)
-	// }()
 
 	for w := 0; w < len(links); w++ {
 		fmt.Println("spawing a worker")
