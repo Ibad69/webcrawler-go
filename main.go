@@ -71,6 +71,8 @@ func main() {
 	fmt.Println("go web crawler ready!!")
 	flag.Parse()
 
+	start := time.Now()
+
 	if *cpuProfile != "" {
 		file, err := os.Create(*cpuProfile)
 		if err != nil {
@@ -89,12 +91,14 @@ func main() {
 	defer trace.Stop()
 
 	links := []string{
-		"https://devxonic.com/",
-		// "https://linkitsoft.com",
+		// "https://devxonic.com/",
+		// // "https://linkitsoft.com",
 		// "https://google.com",
 		// "https://facebook.com",
 		// "https://x.com",
 		// "https://youtube.com",
+		"http://localhost:8080/index.html",
+		"http://localhost:8080/loop.html",
 	}
 
 	content_res := make(chan []byte)
@@ -102,43 +106,50 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	go logGoroutineCount()
-
 	// go func() {
 	// 	http.ListenAndServe("localhost:6060", nil)
 	// }()
 
 	for w := 0; w < len(links); w++ {
-		// defer wg.Done()
 		fmt.Println("spawing a worker")
 		wg.Add(1)
 		go worker(links[w], content_res, linkchan, &wg)
 	}
 
+	go func() {
+		wg.Wait()
+		close(content_res)
+		close(linkchan)
+		fmt.Println("time taken", time.Since(start))
+	}()
+
 	queue := Queue{elements: make([]string, 0)}
 	crawler := CrawledStatus{link: make(map[string]string), count: 0}
 
+	go logGoroutineCount(&crawler)
+
 	for {
 		fmt.Println("waiting for content")
-		select {
-		case content, ok := <-content_res:
 
-			fmt.Println("received content")
+		fmt.Println("received content")
 
-			if !ok {
-				fmt.Printf("error")
-				// fmt.Println(error)
-				fmt.Printf("Worker %d: content channel closed, exiting.\n")
-				return
-				// break
-			}
+		content, ok := <-content_res
 
-			linkname := <-linkchan
+		if !ok {
+			fmt.Printf("Worker %d: content channel closed, exiting.\n")
+			return
+		}
 
-			// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
-			// wg.Add(1)
-			// go func(wg *sync.WaitGroup) {
-			// defer wg.Done()
+		linkname := <-linkchan
+		if !ok {
+			fmt.Println("linkchan closed")
+			return
+		}
+
+		// IMPORTANT *****put all of the below code inside a single crawler and run it in a go routine separately
+		wg.Add(1)
+		go func(wg *sync.WaitGroup) {
+			defer wg.Done()
 
 			done := make(chan bool)
 			fmt.Println("linkchan", linkname)
@@ -152,26 +163,28 @@ func main() {
 				ParseHtml(b, &queue, &crawler, done, linkname)
 				queue.Dequeue()
 				crawler.UpdateCrawledStatus(linkname)
+				fmt.Println("crawled", linkname)
 			}
 			fmt.Println("queue for link", linkname, queue.elements)
 			fmt.Println("crawled status", crawler.count)
-			// }(&wg)
-			fmt.Println("now processing the next link")
-		case <-time.After(10 * time.Second):
-			// fmt.Println(runtime.NumGoroutine())
-			// wg.Wait()
-			fmt.Println(
-				"no content received for 10 seconds so trying to exit after closing all go routines",
-			)
-			fmt.Println("crawled status", crawler.count)
-			// return
-		}
+		}(&wg)
+		fmt.Println("now processing the next link")
+		// case <-time.After(10 * time.Second):
+		// fmt.Println(runtime.NumGoroutine())
+		// wg.Wait()
+		// fmt.Println(
+		// "no content received for 10 seconds so trying to exit after closing all go routines",
+		// )
+		// fmt.Println("crawled status", crawler.count)
+		// return
+		// }
+		// pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 		// fmt.Println("breaking?")
+
 	}
 }
 
 func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link string) {
-	// fmt.Printf("🛠️  Started parsing %s, %s at %s\n", link, time.Now().Format("15:04:05"))
 	z := html.NewTokenizer(bytes.NewReader(content))
 
 	for {
@@ -197,10 +210,6 @@ func ParseHtml(content []byte, q *Queue, c *CrawledStatus, done chan bool, link 
 							continue
 						}
 						q.Enqueue(v.Val)
-						// c.link[v.Val] = v.Val
-						// c.count++
-						// fmt.Println("sending to channel now?")
-						// done <- true
 					}
 				}
 			}
@@ -212,19 +221,22 @@ func Enqueue(chx chan string, link string) {
 	chx <- link
 }
 
-func logGoroutineCount() {
+func logGoroutineCount(crawler *CrawledStatus) {
 	for {
+		fmt.Println(crawler.count)
 		log.Printf("Number of goroutines: %d\n",
 			runtime.NumGoroutine())
 		time.Sleep(2 * time.Second)
+
 	}
 }
 
 func worker(link string, res chan []byte, linkchan chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	content := readLink(link)
+	fmt.Println("sending content to res channel")
 	res <- content
-	fmt.Println("sending link to link channel", link)
+	// fmt.Println("sending link to link channel", link)
 	linkchan <- link
 	return
 }
